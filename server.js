@@ -6,6 +6,7 @@ import "dotenv/config";
 import fs from "fs";
 import path from "path";
 import bodyParser from "body-parser";
+import { analyzeReports } from "./util.js";
 
 const app = express();
 app.use(express.json());
@@ -130,8 +131,52 @@ app.get("/checkIfSafeToUse", async (req, res) => {
         reports.push({ repoFullName, ...report });
     }
 
-    res.json({ org, reports });
+    res.json(reports);
 });
+
+
+const getOrgForRepo = (repoFullName) => {
+  for (const [orgName, repos] of orgRepositories.entries()) {
+      if (repos.includes(repoFullName)) {
+          return orgName;
+      }
+  }
+  return null; // Return null if no matching org is found
+};
+
+// 🛡️ Check if a repository is safe & send report
+const checkRepoSafetyAndReport = async (repoFullName) => {
+  const installationId = installedRepositories.get(repoFullName);
+
+  if (!installationId) {
+      console.error(`⚠️ Repository ${repoFullName} not found in installed repositories.`);
+      return;
+  }
+
+  // Find the organization from the in-memory DB
+  let org = getOrgForRepo(repoFullName);
+
+  if (!org) {
+      console.error(`⚠️ Organization not found for repository: ${repoFullName}`);
+      return;
+  }
+
+  try {
+      const octokit = await getOctokit(installationId);
+      const report = await fetchSecurityReports(octokit, ...repoFullName.split("/"));
+
+      // Check if repo is safe
+      const isSafe = analyzeReports([{ repoFullName, ...report }])[0].safeToUse;
+
+      // Send report to external service
+      await axios.post("https://localhost.digicert.dev/services/v2/order/certificate/123476/vmc/hosting", { "showSeal": isSafe });
+
+      console.log(`📢 Report sent for org: ${org}, safe: ${isSafe}`);
+  } catch (error) {
+      console.error("❌ Error checking repo safety and reporting:", error);
+  }
+};
+
 
 // 📦 Webhook handler for repository installation
 app.post("/webhook", async (req, res) => {
@@ -147,15 +192,8 @@ app.post("/webhook", async (req, res) => {
     }
 
     if (event === "push" || event === "pull_request" || event === "dependabot_alert" || event === "codeql_alert") {
-        const repo = payload.repository.full_name;
-        const installationId = payload.installation.id;
-
-        try {
-            const octokit = await getOctokit(installationId);
-            await fetchSecurityReports(octokit, ...repo.split("/"));
-        } catch (error) {
-            console.error("Error fetching reports:", error);
-        }
+      const repoFullName = payload.repository.full_name;
+      checkRepoSafetyAndReport(repoFullName);
     }
 
     res.status(200).send("✅ Webhook received");
