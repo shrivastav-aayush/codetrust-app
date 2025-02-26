@@ -12,17 +12,12 @@ const app = express();
 app.use(express.json());
 app.use(bodyParser.json());
 
-// 🏪 In-memory storage for tracking repositories & orgs
-const installedRepositories = new Map(); // repoFullName -> installationId
-const orgRepositories = new Map(); // orgName -> [repoFullNames]
+const installedRepositories = new Map(); 
+const orgRepositories = new Map();
 
-// installedRepositories.set("dc-codetrust/backend-service", 134);
-// installedRepositories.set("dc-codetrust/frontend-app", 32423);
 
-// 📜 Read private key for authentication
 const privateKey = fs.readFileSync(path.join(process.cwd(), "digicert-codetrust.2025-02-24.private-key.pem"), "utf8");
 
-// 🔐 Generate JWT for GitHub App authentication
 const generateGitHubJWT = () => {
     const payload = {
         iat: Math.floor(Date.now() / 1000) - 60,
@@ -32,7 +27,6 @@ const generateGitHubJWT = () => {
     return jwt.sign(payload, privateKey, { algorithm: "RS256" });
 };
 
-// 🛠️ Initialize Octokit for a given installation
 const getOctokit = async (installationId) => {
     const jwtToken = generateGitHubJWT();
     const octokit = new Octokit({ auth: jwtToken });
@@ -44,7 +38,6 @@ const getOctokit = async (installationId) => {
     return new Octokit({ auth: data.token });
 };
 
-// 🔄 Store repository installation details
 const addRepository = (repoFullName, orgName, installationId) => {
     installedRepositories.set(repoFullName, installationId);
     if (!orgRepositories.has(orgName)) {
@@ -53,7 +46,6 @@ const addRepository = (repoFullName, orgName, installationId) => {
     orgRepositories.get(orgName).push(repoFullName);
 };
 
-// 🎯 API: Check if a repository has installed the GitHub App
 app.get("/checkIfAdded", (req, res) => {
     const { repoUrl } = req.query;
     if (installedRepositories.has(repoUrl)) {
@@ -62,7 +54,6 @@ app.get("/checkIfAdded", (req, res) => {
     res.status(404).json({ message: `❌ Repository ${repoUrl} has NOT installed the app.` });
 });
 
-// 🎯 API: Add an organization and its repositories
 app.post("/addOrgWithRepos", (req, res) => {
   const { org, repos } = req.body;
   
@@ -82,7 +73,6 @@ app.post("/addOrgWithRepos", (req, res) => {
       });
   }
 
-  // Add only existing installed repositories to the organization
   repos.forEach((repo) => {
       if (!orgRepositories.get(org).includes(repo)) {
           orgRepositories.get(org).push(repo);
@@ -90,12 +80,11 @@ app.post("/addOrgWithRepos", (req, res) => {
   });
 
   res.json({ 
-      message: `✅ Added organization ${org} with repositories: ${repos.join(", ")}` 
+      message: `Added organization ${org} with repositories: ${repos.join(", ")}` 
   });
 });
 
 
-// 🔍 Fetch security reports for a repository
 const fetchSecurityReports = async (octokit, owner, repo) => {
     try {
         const codeqlAlerts = await octokit.request("GET /repos/{owner}/{repo}/code-scanning/alerts", { owner, repo });
@@ -111,7 +100,6 @@ const fetchSecurityReports = async (octokit, owner, repo) => {
     }
 };
 
-// 🎯 API: Check if an org is safe to use (aggregates alerts for all repos)
 app.get("/checkIfSafeToUse", async (req, res) => {
     const { org } = req.query;
     if (!orgRepositories.has(org)) {
@@ -141,10 +129,9 @@ const getOrgForRepo = (repoFullName) => {
           return orgName;
       }
   }
-  return null; // Return null if no matching org is found
+  return null;
 };
 
-// 🛡️ Check if a repository is safe & send report
 const checkRepoSafetyAndReport = async (repoFullName) => {
   const installationId = installedRepositories.get(repoFullName);
 
@@ -153,7 +140,6 @@ const checkRepoSafetyAndReport = async (repoFullName) => {
       return;
   }
 
-  // Find the organization from the in-memory DB
   let org = getOrgForRepo(repoFullName);
 
   if (!org) {
@@ -165,25 +151,22 @@ const checkRepoSafetyAndReport = async (repoFullName) => {
       const octokit = await getOctokit(installationId);
       const report = await fetchSecurityReports(octokit, ...repoFullName.split("/"));
 
-      // Check if repo is safe
       const isSafe = analyzeReports([{ repoFullName, ...report }])[0].safeToUse;
 
-      // Send report to external service
       await axios.post("https://localhost.digicert.dev/services/v2/order/certificate/123476/vmc/hosting", { "showSeal": isSafe });
 
       console.log(`📢 Report sent for org: ${org}, safe: ${isSafe}`);
   } catch (error) {
-      console.error("❌ Error checking repo safety and reporting:", error);
+      console.error("Error checking repo safety and reporting:", error);
   }
 };
 
 
-// 📦 Webhook handler for repository installation
 app.post("/webhook", async (req, res) => {
     const event = req.headers["x-github-event"];
     const payload = req.body;
 
-    console.log(`📩 Received event: ${event}`);
+    console.log(`Received event: ${event}`);
 
     if (event === "installation") {
         payload.repositories.forEach((repo) => {
@@ -196,7 +179,7 @@ app.post("/webhook", async (req, res) => {
       checkRepoSafetyAndReport(repoFullName);
     }
 
-    res.status(200).send("✅ Webhook received");
+    res.status(200).send("Webhook received");
 });
 
 // 🏃 Start Express server
